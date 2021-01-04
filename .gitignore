@@ -1,0 +1,9 @@
+*.crt
+*.csr
+*.key
+*.cnf
+*kubeconfig
+rbac.*
+!rbac.yaml.template
+*.json
+gcr-json-key.yaml

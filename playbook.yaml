@@ -1,0 +1,83 @@
+- name: create user
+  hosts: localhost
+  gather_facts: no
+  vars:
+    user: bo-gateway-service
+    groups:
+    - app
+    namespace: bo-gateway-service
+    enviroment: stage
+  tasks:
+  - name: generate directory
+    file:
+      path: "./{{ enviroment }}/{{ namespace }}"
+      state: directory
+      recurse: yes
+  - name: Generate csr.cnf from template
+    template:
+      src: ./csr.cnf.template
+      dest: ./{{ enviroment }}/{{ namespace }}/csr.cnf
+  - name: Creation of a Private Key and a Certificate Signing Request (CSR)
+    command: "{{ item }}"
+    with_items:
+    - openssl genrsa -out ./{{ enviroment }}/{{ namespace }}/{{ user }}.key 4096
+    - openssl req -config ./{{ enviroment }}/{{ namespace }}/csr.cnf -new -key ./{{ enviroment }}/{{ namespace }}/{{ user }}.key -nodes -out ./{{ enviroment }}/{{ namespace }}/{{ user }}.csr
+  - name: Get content of {{ user }}.csr
+    shell: cat ./{{ enviroment }}/{{ namespace }}/{{ user }}.csr | base64 | tr -d '\n'
+    register: content
+  - name: Signature of the CSR
+    k8s:
+      state: present
+      definition:
+        apiVersion: certificates.k8s.io/v1beta1
+        kind: CertificateSigningRequest
+        metadata:
+          name: "{{ user }}-csr"
+        spec:
+          groups:
+          - system:authenticated
+          request: "{{ content.stdout }}"
+          usages:
+          - digital signature
+          - key encipherment
+          - server auth
+          - client auth
+  - name: Approving signing request
+    command: kubectl certificate approve {{ user }}-csr
+  - name: Get CLUSTER_NAME
+    command: kubectl config view --minify -o jsonpath='{.current-context}'
+    register: cluster_name
+  - name: Downloading certificate
+    shell: kubectl get certificatesigningrequest {{ user }}-csr -o jsonpath='{.status.certificate}' | base64 --decode > ./{{ enviroment }}/{{ namespace }}/{{ user }}.crt
+  - name: Get CLIENT_CERTIFICATE_DATA
+    shell: cat ./{{ enviroment }}/{{ namespace }}/{{ user }}.crt | base64
+    register: client_certificate_data
+  - name: Get CLIENT_KEY_DATA
+    shell: cat ./{{ enviroment }}/{{ namespace }}/{{ user }}.key | base64
+    register: client_key_data
+  - name: Get CLUSTER_CA
+    shell: kubectl config view --raw -o json | jq -r '.clusters[] | select(.name == "'$(kubectl config current-context)'") | .cluster."certificate-authority-data"'
+    register: cluster_ca
+  - name: Get CLUSTER_ENDPOINT
+    shell: kubectl config view --raw -o json | jq -r '.clusters[] | select(.name == "'$(kubectl config current-context)'") | .cluster."server"'
+    register: cluster_endpoint
+  - name: Generate kubeconfig from template
+    template:
+      src: ./kubeconfig.template
+      dest: ./{{ enviroment }}/{{ namespace }}/{{user}}-kubeconfig
+    vars:
+      CLUSTER_CA: "{{ cluster_ca.stdout }}"
+      CLUSTER_ENDPOINT: "{{ cluster_endpoint.stdout }}"
+      CLUSTER_NAME: "{{ cluster_name.stdout }}"
+      USER: "{{ user }}"
+      CLIENT_CERTIFICATE_DATA: "{{ client_certificate_data.stdout }}"
+      CLIENT_KEY_DATA: "{{ client_key_data.stdout }}"
+  - name: Generate rbac from template
+    template:
+      src: ./rbac.yaml.template
+      dest: ./{{ enviroment }}/{{ namespace }}/rbac.{{ user }}.yaml
+    vars:
+      role_name: "{{ namespace }}-admin"
+      role_binding_name: "{{ namespace }}-admin-{{ user }}"
+  # - name: Create secret for pull docker image
+  #   shell: kubectl create secret docker-registry gcr-json-key --docker-server=gcr.io --docker-username=_json_key --docker-password="$(cat ./key-file.json)" --namespace {{ namespace }}
