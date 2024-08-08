@@ -2,10 +2,10 @@
   hosts: localhost
   gather_facts: no
   vars:
-    user: bo-gateway-service
+    user: screen-recorder-manager
     groups:
-    - app
-    namespace: bo-gateway-service
+    - screen-recorder-manager
+    namespace: screen-recorder-manager
     enviroment: stage
   tasks:
   - name: generate directory
@@ -29,7 +29,7 @@
     k8s:
       state: present
       definition:
-        apiVersion: certificates.k8s.io/v1beta1
+        apiVersion: certificates.k8s.io/v1
         kind: CertificateSigningRequest
         metadata:
           name: "{{ user }}-csr"
@@ -42,6 +42,7 @@
           - key encipherment
           - server auth
           - client auth
+          signerName: kubernetes.io/kube-apiserver-client
   - name: Approving signing request
     command: kubectl certificate approve {{ user }}-csr
   - name: Get CLUSTER_NAME
@@ -80,4 +81,4 @@
       role_name: "{{ namespace }}-admin"
       role_binding_name: "{{ namespace }}-admin-{{ user }}"
   # - name: Create secret for pull docker image
-  #   shell: kubectl create secret docker-registry gcr-json-key --docker-server=gcr.io --docker-username=_json_key --docker-password="$(cat ./key-file.json)" --namespace {{ namespace }}
+  #   shell: kubectl create secret docker-registry artifact-registry-secret --docker-server=asia-east1-docker.pkg.dev --docker-username=_json_key --docker-password="$(cat ./ai-workshop-426204-e0c603087138.json)" --namespace {{ namespace }}
